@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { sampleData } from '../../data/sampleData';
@@ -6,13 +6,13 @@ import Button from '../../components/Button';
 import Loading from '../../components/Loading';
 import type { HubTerminal, Order } from '../../types';
 
-const TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? '';
+const MAPBOX_TOKEN = (import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? '').trim();
 
 const DRIVER_ID = 'driver-4';
 const TODAY = '2026-04-05';
 
 const DriverMap = () => {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [mapEl, setMapEl] = useState<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const didFitRef = useRef(false);
@@ -56,18 +56,25 @@ const DriverMap = () => {
     return line.length >= 2 ? line : [line[0], line[0]];
   }, [pos, destStops]);
 
-  useEffect(() => {
-    if (!TOKEN || !containerRef.current) return;
-    mapboxgl.accessToken = TOKEN;
+  useLayoutEffect(() => {
+    if (!MAPBOX_TOKEN || !mapEl) return;
+    mapboxgl.accessToken = MAPBOX_TOKEN;
     const map = new mapboxgl.Map({
-      container: containerRef.current,
+      container: mapEl,
       style: 'mapbox://styles/mapbox/streets-v12',
       center: [-95.35, 29.75],
       zoom: 10,
+      attributionControl: true,
     });
     map.addControl(new mapboxgl.NavigationControl(), 'top-right');
     mapRef.current = map;
+
+    const onWinResize = () => map.resize();
+    window.addEventListener('resize', onWinResize);
+
     map.on('load', () => {
+      map.resize();
+      requestAnimationFrame(() => map.resize());
       map.addSource('route', {
         type: 'geojson',
         data: {
@@ -91,12 +98,18 @@ const DriverMap = () => {
       });
       setMapReady(true);
     });
+
+    if (import.meta.env.DEV) {
+      map.on('error', (e) => console.error('[DriverMap]', e));
+    }
+
     return () => {
+      window.removeEventListener('resize', onWinResize);
       mapRef.current = null;
       setMapReady(false);
       map.remove();
     };
-  }, []);
+  }, [MAPBOX_TOKEN, mapEl]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -149,7 +162,7 @@ const DriverMap = () => {
     setLastSent(new Date().toLocaleTimeString());
   }
 
-  if (!TOKEN) {
+  if (!MAPBOX_TOKEN) {
     return (
       <div className="mx-auto max-w-md p-8 text-center text-sm text-slate-600 dark:text-slate-400">
         <p className="font-medium text-slate-900 dark:text-slate-100">Driver map</p>
@@ -169,12 +182,19 @@ const DriverMap = () => {
           <span className="text-xs text-slate-500">Last sent: {lastSent}</span>
         ) : null}
       </div>
-      <div className="relative h-[min(55vh,420px)] w-full overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-        <div ref={containerRef} className="absolute inset-0" />
+      <div
+        className="relative w-full overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700"
+        style={{ height: 'min(55vh, 420px)' }}
+      >
+        <div
+          ref={setMapEl}
+          className="absolute inset-0 z-0 min-h-[200px] w-full"
+          style={{ width: '100%', height: '100%' }}
+        />
         {!mapReady ? (
           <Loading
             label="Loading map…"
-            className="absolute inset-0 z-10 gap-3 rounded-lg bg-slate-100/90 dark:bg-slate-900/90"
+            className="pointer-events-none absolute inset-0 z-10 gap-3 rounded-lg bg-slate-100/90 dark:bg-slate-900/90"
           />
         ) : null}
       </div>

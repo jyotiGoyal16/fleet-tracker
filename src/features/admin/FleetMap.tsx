@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { sampleData } from '../../data/sampleData';
@@ -8,13 +8,13 @@ import Select from '../../components/Select';
 import type { Driver, FleetDeliveryStatus, Vehicle, VehicleLocation } from '../../types';
 import { DELIVERY_STATUSES, REFRESH_TIME_MS } from '../../constants';
 
-const TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? '';
+const MAPBOX_TOKEN = (import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? '').trim();
 
 const FleetMap = () => {
-  const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const [mapReady, setMapReady] = useState(false);
+  const [mapEl, setMapEl] = useState<HTMLDivElement | null>(null);
 
   const allLocations = useMemo(() => sampleData.vehicleLocations as VehicleLocation[], []);
   const vehicles = useMemo(() => sampleData.vehicles as Vehicle[], []);
@@ -71,27 +71,41 @@ const FleetMap = () => {
     return () => window.clearInterval(id);
   }, [bumpRefresh]);
 
-  useEffect(() => {
-    if (!TOKEN || !containerRef.current) return;
+  useLayoutEffect(() => {
+    if (!MAPBOX_TOKEN || !mapEl) return;
 
-    mapboxgl.accessToken = TOKEN;
+    mapboxgl.accessToken = MAPBOX_TOKEN;
 
     const map = new mapboxgl.Map({
-      container: containerRef.current,
+      container: mapEl,
       style: 'mapbox://styles/mapbox/streets-v12',
       center: [-95.35, 29.75],
       zoom: 9,
+      attributionControl: true,
     });
     map.addControl(new mapboxgl.NavigationControl(), 'top-right');
     mapRef.current = map;
-    map.on('load', () => setMapReady(true));
+
+    const onWinResize = () => map.resize();
+    window.addEventListener('resize', onWinResize);
+
+    map.on('load', () => {
+      map.resize();
+      requestAnimationFrame(() => map.resize());
+      setMapReady(true);
+    });
+
+    if (import.meta.env.DEV) {
+      map.on('error', (e) => console.error('[FleetMap]', e));
+    }
 
     return () => {
+      window.removeEventListener('resize', onWinResize);
       mapRef.current = null;
       setMapReady(false);
       map.remove();
     };
-  }, []);
+  }, [MAPBOX_TOKEN, mapEl]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -150,12 +164,14 @@ const FleetMap = () => {
     [lastRefreshedAt],
   );
 
-  if (!TOKEN) {
+  if (!MAPBOX_TOKEN) {
     return (
       <div className="mx-auto max-w-6xl p-4">
         <h1 className="my-4 text-xl font-semibold my-4">Fleet map</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Not able to load the map. Please try again later.
+          Set <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">VITE_MAPBOX_ACCESS_TOKEN</code> in{' '}
+          <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">.env</code> at the project root, then restart{' '}
+          <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">npm run dev</code>.
         </p>
       </div>
     );
@@ -198,12 +214,20 @@ const FleetMap = () => {
         Last updated: {lastRefreshedLabel}
       </p>
 
-      <div className="relative h-[min(70vh,560px)] w-full overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-        <div ref={containerRef} className="absolute inset-0" />
+      {/* Fixed height so Mapbox always gets a non-zero container (absolute children need parent height). */}
+      <div
+        className="relative w-full overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700"
+        style={{ height: 'min(70vh, 560px)' }}
+      >
+        <div
+          ref={setMapEl}
+          className="absolute inset-0 z-0 min-h-[200px] w-full"
+          style={{ width: '100%', height: '100%' }}
+        />
         {!mapReady ? (
           <Loading
             label="Loading map…"
-            className="absolute inset-0 z-10 gap-3 rounded-lg bg-slate-100/90 dark:bg-slate-900/90"
+            className="pointer-events-none absolute inset-0 z-10 gap-3 rounded-lg bg-slate-100/90 dark:bg-slate-900/90"
           />
         ) : null}
       </div>
